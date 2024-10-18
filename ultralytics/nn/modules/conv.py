@@ -330,3 +330,26 @@ class Concat(nn.Module):
     def forward(self, x):
         """Forward pass for the YOLOv8 mask Proto module."""
         return torch.cat(x, self.d)
+
+# src
+class Concat_dropout(nn.Module):
+    """Concatenate a list of tensors along dimension."""
+    def __init__(self, dimension=1, ch=None):
+        """Concatenates a list of tensors along a specified dimension."""
+        super().__init__()
+        self.d = dimension
+        self.weight = nn.Parameter(torch.tensor([5.0]))
+
+        self.conv = nn.Conv2d(sum(ch),
+                               ch[0],
+                               kernel_size=1,
+                               stride=1)
+
+    def forward(self, x):
+        """Forward pass for the YOLOv8 mask Proto module."""
+        if torch.sigmoid(self.weight) > 0.5:
+            concatenated = torch.cat(x, self.d)
+            return self.conv(concatenated)
+        else:
+            return x[0]
+############
