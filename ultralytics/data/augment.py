@@ -394,17 +394,39 @@ class BaseMixTransform:
         # Get images information will be used for Mosaic or MixUp
         mix_labels = [self.dataset.get_image_and_label(i) for i in indexes]
 
-        if self.pre_transform is not None:
-            for i, data in enumerate(mix_labels):
-                mix_labels[i] = self.pre_transform(data)
-        labels["mix_labels"] = mix_labels
+        ########Jiayuan
+        if hasattr(self.dataset, 'global_count'):
+            tem_list = [file[self.dataset.global_count] for file in mix_labels]
+            mix_labels = tem_list
+        ########
+        elif self.dataset.together:
+            mix_labels_list = list(zip(*mix_labels))
 
-        # Update cls and texts
-        labels = self._update_label_text(labels)
+        # if self.pre_transform is not None:
+        #     for i, data in enumerate(mix_labels):
+        #         mix_labels[i] = self.pre_transform(data)
+        # labels["mix_labels"] = mix_labels
+
+        # # Update cls and texts
+        # labels = self._update_label_text(labels)
+        # # Mosaic or MixUp
+        # labels = self._mix_transform(labels)
+        # labels.pop("mix_labels", None)
+        # return labels
+
+        if self.pre_transform is not None:
+            for mix_labels in mix_labels_list:
+                for i, data in enumerate(mix_labels):
+                    mix_labels[i] = self.pre_transform(data)
+        for i, mix_labels in enumerate(mix_labels_list):
+            labels[i]['mix_labels'] = mix_labels
+
         # Mosaic or MixUp
         labels = self._mix_transform(labels)
-        labels.pop("mix_labels", None)
+        for label in labels:
+            label.pop('mix_labels', None)
         return labels
+
 
     def _mix_transform(self, labels):
         """
@@ -566,7 +588,9 @@ class Mosaic(BaseMixTransform):
         else:  # select any images
             return [random.randint(0, len(self.dataset) - 1) for _ in range(self.n - 1)]
 
-    def _mix_transform(self, labels):
+    # src
+    # def _mix_transform(self, labels):
+    def _mix_transform(self, labels_list):
         """
         Applies mosaic augmentation to the input image and labels.
 
@@ -589,11 +613,19 @@ class Mosaic(BaseMixTransform):
             >>> mosaic = Mosaic(dataset, imgsz=640, p=1.0, n=4)
             >>> augmented_data = mosaic._mix_transform(labels)
         """
-        assert labels.get("rect_shape", None) is None, "rect and mosaic are mutually exclusive."
-        assert len(labels.get("mix_labels", [])), "There are no other images for mosaic augment."
+        # assert labels.get("rect_shape", None) is None, "rect and mosaic are mutually exclusive."
+        # assert len(labels.get("mix_labels", [])), "There are no other images for mosaic augment."
+        # return (
+        #     self._mosaic3(labels) if self.n == 3 else self._mosaic4(labels) if self.n == 4 else self._mosaic9(labels)
+        # )  # This code is modified for mosaic3 method.
+        for labels in labels_list:
+            assert labels.get("rect_shape", None) is None, "rect and mosaic are mutually exclusive."
+            assert len(labels.get("mix_labels", [])), "There are no other images for mosaic augment."
         return (
-            self._mosaic3(labels) if self.n == 3 else self._mosaic4(labels) if self.n == 4 else self._mosaic9(labels)
+            self._mosaic4(labels_list) if self.n == 4 else self._mosaic9(labels_list)
         )  # This code is modified for mosaic3 method.
+
+
 
     def _mosaic3(self, labels):
         """
@@ -654,7 +686,9 @@ class Mosaic(BaseMixTransform):
         final_labels["img"] = img3[-self.border[0] : self.border[0], -self.border[1] : self.border[1]]
         return final_labels
 
-    def _mosaic4(self, labels):
+    # src
+    # def _mosaic4(self, labels):
+    def _mosaic4(self, labels_list):
         """
         Creates a 2x2 image mosaic from four input images.
 
@@ -678,39 +712,42 @@ class Mosaic(BaseMixTransform):
             >>> result = mosaic._mosaic4(labels)
             >>> assert result["img"].shape == (1280, 1280, 3)
         """
-        mosaic_labels = []
+        new_labels_list = []
         s = self.imgsz
         yc, xc = (int(random.uniform(-x, 2 * s + x)) for x in self.border)  # mosaic center x, y
-        for i in range(4):
-            labels_patch = labels if i == 0 else labels["mix_labels"][i - 1]
-            # Load image
-            img = labels_patch["img"]
-            h, w = labels_patch.pop("resized_shape")
+        for labels in labels_list:
+            mosaic_labels = []
+            for i in range(4):
+                labels_patch = labels if i == 0 else labels["mix_labels"][i - 1]
+                # Load image
+                img = labels_patch["img"]
+                h, w = labels_patch.pop("resized_shape")
 
-            # Place img in img4
-            if i == 0:  # top left
-                img4 = np.full((s * 2, s * 2, img.shape[2]), 114, dtype=np.uint8)  # base image with 4 tiles
-                x1a, y1a, x2a, y2a = max(xc - w, 0), max(yc - h, 0), xc, yc  # xmin, ymin, xmax, ymax (large image)
-                x1b, y1b, x2b, y2b = w - (x2a - x1a), h - (y2a - y1a), w, h  # xmin, ymin, xmax, ymax (small image)
-            elif i == 1:  # top right
-                x1a, y1a, x2a, y2a = xc, max(yc - h, 0), min(xc + w, s * 2), yc
-                x1b, y1b, x2b, y2b = 0, h - (y2a - y1a), min(w, x2a - x1a), h
-            elif i == 2:  # bottom left
-                x1a, y1a, x2a, y2a = max(xc - w, 0), yc, xc, min(s * 2, yc + h)
-                x1b, y1b, x2b, y2b = w - (x2a - x1a), 0, w, min(y2a - y1a, h)
-            elif i == 3:  # bottom right
-                x1a, y1a, x2a, y2a = xc, yc, min(xc + w, s * 2), min(s * 2, yc + h)
-                x1b, y1b, x2b, y2b = 0, 0, min(w, x2a - x1a), min(y2a - y1a, h)
+                # Place img in img4
+                if i == 0:  # top left
+                    img4 = np.full((s * 2, s * 2, img.shape[2]), 114, dtype=np.uint8)  # base image with 4 tiles
+                    x1a, y1a, x2a, y2a = max(xc - w, 0), max(yc - h, 0), xc, yc  # xmin, ymin, xmax, ymax (large image)
+                    x1b, y1b, x2b, y2b = w - (x2a - x1a), h - (y2a - y1a), w, h  # xmin, ymin, xmax, ymax (small image)
+                elif i == 1:  # top right
+                    x1a, y1a, x2a, y2a = xc, max(yc - h, 0), min(xc + w, s * 2), yc
+                    x1b, y1b, x2b, y2b = 0, h - (y2a - y1a), min(w, x2a - x1a), h
+                elif i == 2:  # bottom left
+                    x1a, y1a, x2a, y2a = max(xc - w, 0), yc, xc, min(s * 2, yc + h)
+                    x1b, y1b, x2b, y2b = w - (x2a - x1a), 0, w, min(y2a - y1a, h)
+                elif i == 3:  # bottom right
+                    x1a, y1a, x2a, y2a = xc, yc, min(xc + w, s * 2), min(s * 2, yc + h)
+                    x1b, y1b, x2b, y2b = 0, 0, min(w, x2a - x1a), min(y2a - y1a, h)
 
-            img4[y1a:y2a, x1a:x2a] = img[y1b:y2b, x1b:x2b]  # img4[ymin:ymax, xmin:xmax]
-            padw = x1a - x1b
-            padh = y1a - y1b
+                img4[y1a:y2a, x1a:x2a] = img[y1b:y2b, x1b:x2b]  # img4[ymin:ymax, xmin:xmax]
+                padw = x1a - x1b
+                padh = y1a - y1b
 
-            labels_patch = self._update_labels(labels_patch, padw, padh)
-            mosaic_labels.append(labels_patch)
-        final_labels = self._cat_labels(mosaic_labels)
-        final_labels["img"] = img4
-        return final_labels
+                labels_patch = self._update_labels(labels_patch, padw, padh)
+                mosaic_labels.append(labels_patch)
+            final_labels = self._cat_labels(mosaic_labels)
+            final_labels["img"] = img4
+            new_labels_list.append(final_labels)
+        return new_labels_list
 
     def _mosaic9(self, labels):
         """
@@ -1181,7 +1218,9 @@ class RandomPerspective:
         visible[out_mask] = 0
         return np.concatenate([xy, visible], axis=-1).reshape(n, nkpt, 3)
 
-    def __call__(self, labels):
+    # src
+    # def __call__(self, labels):
+    def __call__(self, labels_list):
         """
         Applies random perspective and affine transformations to an image and its associated labels.
 
@@ -1216,48 +1255,96 @@ class RandomPerspective:
             >>> result = transform(labels)
             >>> assert result["img"].shape[:2] == result["resized_shape"]
         """
-        if self.pre_transform and "mosaic_border" not in labels:
-            labels = self.pre_transform(labels)
-        labels.pop("ratio_pad", None)  # do not need ratio pad
 
-        img = labels["img"]
-        cls = labels["cls"]
-        instances = labels.pop("instances")
-        # Make sure the coord formats are right
-        instances.convert_bbox(format="xyxy")
-        instances.denormalize(*img.shape[:2][::-1])
+        # src
 
-        border = labels.pop("mosaic_border", self.border)
-        self.size = img.shape[1] + border[1] * 2, img.shape[0] + border[0] * 2  # w, h
-        # M is affine matrix
-        # Scale for func:`box_candidates`
-        img, M, scale = self.affine_transform(img, border)
+        # if self.pre_transform and "mosaic_border" not in labels:
+        #     labels = self.pre_transform(labels)
+        # labels.pop("ratio_pad", None)  # do not need ratio pad
 
-        bboxes = self.apply_bboxes(instances.bboxes, M)
+        # img = labels["img"]
+        # cls = labels["cls"]
+        # instances = labels.pop("instances")
+        # # Make sure the coord formats are right
+        # instances.convert_bbox(format="xyxy")
+        # instances.denormalize(*img.shape[:2][::-1])
 
-        segments = instances.segments
-        keypoints = instances.keypoints
-        # Update bboxes if there are segments.
-        if len(segments):
-            bboxes, segments = self.apply_segments(segments, M)
+        # border = labels.pop("mosaic_border", self.border)
+        # self.size = img.shape[1] + border[1] * 2, img.shape[0] + border[0] * 2  # w, h
+        # # M is affine matrix
+        # # Scale for func:`box_candidates`
+        # img, M, scale = self.affine_transform(img, border)
 
-        if keypoints is not None:
-            keypoints = self.apply_keypoints(keypoints, M)
-        new_instances = Instances(bboxes, segments, keypoints, bbox_format="xyxy", normalized=False)
-        # Clip
-        new_instances.clip(*self.size)
+        # bboxes = self.apply_bboxes(instances.bboxes, M)
 
-        # Filter instances
-        instances.scale(scale_w=scale, scale_h=scale, bbox_only=True)
-        # Make the bboxes have the same scale with new_bboxes
-        i = self.box_candidates(
-            box1=instances.bboxes.T, box2=new_instances.bboxes.T, area_thr=0.01 if len(segments) else 0.10
-        )
-        labels["instances"] = new_instances[i]
-        labels["cls"] = cls[i]
-        labels["img"] = img
-        labels["resized_shape"] = img.shape[:2]
-        return labels
+        # segments = instances.segments
+        # keypoints = instances.keypoints
+        # # Update bboxes if there are segments.
+        # if len(segments):
+        #     bboxes, segments = self.apply_segments(segments, M)
+
+        # if keypoints is not None:
+        #     keypoints = self.apply_keypoints(keypoints, M)
+        # new_instances = Instances(bboxes, segments, keypoints, bbox_format="xyxy", normalized=False)
+        # # Clip
+        # new_instances.clip(*self.size)
+
+        # # Filter instances
+        # instances.scale(scale_w=scale, scale_h=scale, bbox_only=True)
+        # # Make the bboxes have the same scale with new_bboxes
+        # i = self.box_candidates(
+        #     box1=instances.bboxes.T, box2=new_instances.bboxes.T, area_thr=0.01 if len(segments) else 0.10
+        # )
+        # labels["instances"] = new_instances[i]
+        # labels["cls"] = cls[i]
+        # labels["img"] = img
+        # labels["resized_shape"] = img.shape[:2]
+        # return labels
+
+        for count, labels in enumerate(labels_list):
+            if self.pre_transform and "mosaic_border" not in labels:
+                labels = self.pre_transform(labels)
+            labels.pop("ratio_pad", None)  # do not need ratio pad
+
+            img = labels["img"]
+            cls = labels["cls"]
+            instances = labels.pop("instances")
+            # Make sure the coord formats are right
+            instances.convert_bbox(format="xyxy")
+            instances.denormalize(*img.shape[:2][::-1])
+
+            border = labels.pop("mosaic_border", self.border)
+            self.size = img.shape[1] + border[1] * 2, img.shape[0] + border[0] * 2  # w, h
+            # M is affine matrix
+            # Scale for func:`box_candidates`
+            img, M, scale = self.affine_transform(img, border)
+
+            bboxes = self.apply_bboxes(instances.bboxes, M)
+
+            segments = instances.segments
+            keypoints = instances.keypoints
+            # Update bboxes if there are segments.
+            if len(segments):
+                bboxes, segments = self.apply_segments(segments, M)
+
+            if keypoints is not None:
+                keypoints = self.apply_keypoints(keypoints, M)
+            new_instances = Instances(bboxes, segments, keypoints, bbox_format="xyxy", normalized=False)
+            # Clip
+            new_instances.clip(*self.size)
+
+            # Filter instances
+            instances.scale(scale_w=scale, scale_h=scale, bbox_only=True)
+            # Make the bboxes have the same scale with new_bboxes
+            i = self.box_candidates(
+                box1=instances.bboxes.T, box2=new_instances.bboxes.T, area_thr=0.01 if len(segments) else 0.10
+            )
+            labels["instances"] = new_instances[i]
+            labels["cls"] = cls[i]
+            labels["img"] = img
+            labels["resized_shape"] = img.shape[:2]
+        return labels_list
+
 
     def box_candidates(self, box1, box2, wh_thr=2, ar_thr=100, area_thr=0.1, eps=1e-16):
         """
@@ -1341,7 +1428,9 @@ class RandomHSV:
         self.sgain = sgain
         self.vgain = vgain
 
-    def __call__(self, labels):
+    # src
+    # def __call__(self, labels):
+    def __call__(self, labels_list):
         """
         Applies random HSV augmentation to an image within predefined limits.
 
@@ -1362,6 +1451,7 @@ class RandomHSV:
             >>> hsv_augmenter(labels)
             >>> augmented_img = labels["img"]
         """
+        labels = labels_list[0]
         img = labels["img"]
         if self.hgain or self.sgain or self.vgain:
             r = np.random.uniform(-1, 1, 3) * [self.hgain, self.sgain, self.vgain] + 1  # random gains
@@ -1375,7 +1465,9 @@ class RandomHSV:
 
             im_hsv = cv2.merge((cv2.LUT(hue, lut_hue), cv2.LUT(sat, lut_sat), cv2.LUT(val, lut_val)))
             cv2.cvtColor(im_hsv, cv2.COLOR_HSV2BGR, dst=img)  # no return needed
-        return labels
+        for label in labels_list:
+            label["img"] = labels['img'].copy()
+        return labels_list
 
 
 class RandomFlip:
@@ -1426,7 +1518,9 @@ class RandomFlip:
         self.direction = direction
         self.flip_idx = flip_idx
 
-    def __call__(self, labels):
+    # src
+    # def __call__(self, labels):
+    def __call__(self, labels_list):
         """
         Applies random flip to an image and updates any instances like bounding boxes or keypoints accordingly.
 
@@ -1450,27 +1544,49 @@ class RandomFlip:
             >>> random_flip = RandomFlip(p=0.5, direction="horizontal")
             >>> flipped_labels = random_flip(labels)
         """
-        img = labels["img"]
-        instances = labels.pop("instances")
-        instances.convert_bbox(format="xywh")
-        h, w = img.shape[:2]
-        h = 1 if instances.normalized else h
-        w = 1 if instances.normalized else w
 
-        # Flip up-down
-        if self.direction == "vertical" and random.random() < self.p:
-            img = np.flipud(img)
-            instances.flipud(h)
-        if self.direction == "horizontal" and random.random() < self.p:
-            img = np.fliplr(img)
-            instances.fliplr(w)
-            # For keypoints
-            if self.flip_idx is not None and instances.keypoints is not None:
-                instances.keypoints = np.ascontiguousarray(instances.keypoints[:, self.flip_idx, :])
-        labels["img"] = np.ascontiguousarray(img)
-        labels["instances"] = instances
-        return labels
+        # img = labels["img"]
+        # instances = labels.pop("instances")
+        # instances.convert_bbox(format="xywh")
+        # h, w = img.shape[:2]
+        # h = 1 if instances.normalized else h
+        # w = 1 if instances.normalized else w
 
+        # # Flip up-down
+        # if self.direction == "vertical" and random.random() < self.p:
+        #     img = np.flipud(img)
+        #     instances.flipud(h)
+        # if self.direction == "horizontal" and random.random() < self.p:
+        #     img = np.fliplr(img)
+        #     instances.fliplr(w)
+        #     # For keypoints
+        #     if self.flip_idx is not None and instances.keypoints is not None:
+        #         instances.keypoints = np.ascontiguousarray(instances.keypoints[:, self.flip_idx, :])
+        # labels["img"] = np.ascontiguousarray(img)
+        # labels["instances"] = instances
+        # return labels
+
+        for labels in labels_list:
+            img = labels["img"]
+            instances = labels.pop("instances")
+            instances.convert_bbox(format="xywh")
+            h, w = img.shape[:2]
+            h = 1 if instances.normalized else h
+            w = 1 if instances.normalized else w
+
+            # Flip up-down
+            if self.direction == "vertical" and random.random() < self.p:
+                img = np.flipud(img)
+                instances.flipud(h)
+            if self.direction == "horizontal" and random.random() < self.p:
+                img = np.fliplr(img)
+                instances.fliplr(w)
+                # For keypoints
+                if self.flip_idx is not None and instances.keypoints is not None:
+                    instances.keypoints = np.ascontiguousarray(instances.keypoints[:, self.flip_idx, :])
+            labels["img"] = np.ascontiguousarray(img)
+            labels["instances"] = instances
+        return labels_list
 
 class LetterBox:
     """
@@ -1668,32 +1784,62 @@ class CopyPaste(BaseMixTransform):
         labels2 = labels["mix_labels"][0]
         return self._transform(labels, labels2)
 
-    def __call__(self, labels):
-        """Applies Copy-Paste augmentation to an image and its labels."""
-        if len(labels["instances"].segments) == 0 or self.p == 0:
-            return labels
-        if self.mode == "flip":
-            return self._transform(labels)
+    # src
+    # def __call__(self, labels):
+    def __call__(self, labels_list):
+        for labels in labels_list:
+            """Applies Copy-Paste augmentation to an image and its labels."""
+            if len(labels["instances"].segments) == 0 or self.p == 0:
+                return labels
+            if self.mode == "flip":
+                return self._transform(labels)
 
-        # Get index of one or three other images
-        indexes = self.get_indexes()
-        if isinstance(indexes, int):
-            indexes = [indexes]
+            # Get index of one or three other images
+            indexes = self.get_indexes()
+            if isinstance(indexes, int):
+                indexes = [indexes]
 
-        # Get images information will be used for Mosaic or MixUp
-        mix_labels = [self.dataset.get_image_and_label(i) for i in indexes]
+            # Get images information will be used for Mosaic or MixUp
+            mix_labels = [self.dataset.get_image_and_label(i) for i in indexes]
 
-        if self.pre_transform is not None:
-            for i, data in enumerate(mix_labels):
-                mix_labels[i] = self.pre_transform(data)
-        labels["mix_labels"] = mix_labels
+            if self.pre_transform is not None:
+                for i, data in enumerate(mix_labels):
+                    mix_labels[i] = self.pre_transform(data)
+            labels["mix_labels"] = mix_labels
 
-        # Update cls and texts
-        labels = self._update_label_text(labels)
-        # Mosaic or MixUp
-        labels = self._mix_transform(labels)
-        labels.pop("mix_labels", None)
-        return labels
+            # Update cls and texts
+            labels = self._update_label_text(labels)
+            # Mosaic or MixUp
+            labels = self._mix_transform(labels)
+            labels.pop("mix_labels", None)
+        return labels_list
+
+
+        # """Applies Copy-Paste augmentation to an image and its labels."""
+        # if len(labels["instances"].segments) == 0 or self.p == 0:
+        #     return labels
+        # if self.mode == "flip":
+        #     return self._transform(labels)
+
+        # # Get index of one or three other images
+        # indexes = self.get_indexes()
+        # if isinstance(indexes, int):
+        #     indexes = [indexes]
+
+        # # Get images information will be used for Mosaic or MixUp
+        # mix_labels = [self.dataset.get_image_and_label(i) for i in indexes]
+
+        # if self.pre_transform is not None:
+        #     for i, data in enumerate(mix_labels):
+        #         mix_labels[i] = self.pre_transform(data)
+        # labels["mix_labels"] = mix_labels
+
+        # # Update cls and texts
+        # labels = self._update_label_text(labels)
+        # # Mosaic or MixUp
+        # labels = self._mix_transform(labels)
+        # labels.pop("mix_labels", None)
+        # return labels
 
     def _transform(self, labels1, labels2={}):
         """Applies Copy-Paste augmentation to combine objects from another image into the current image."""
@@ -1863,7 +2009,9 @@ class Albumentations:
         except Exception as e:
             LOGGER.info(f"{prefix}{e}")
 
-    def __call__(self, labels):
+    # src
+    # def __call__(self, labels):
+    def __call__(self, labels_list):
         """
         Applies Albumentations transformations to input labels.
 
@@ -1894,28 +2042,52 @@ class Albumentations:
             - Spatial transforms update bounding boxes, while non-spatial transforms only modify the image.
             - Requires the Albumentations library to be installed.
         """
-        if self.transform is None or random.random() > self.p:
-            return labels
+        # src 
 
-        if self.contains_spatial:
-            cls = labels["cls"]
-            if len(cls):
-                im = labels["img"]
-                labels["instances"].convert_bbox("xywh")
-                labels["instances"].normalize(*im.shape[:2][::-1])
-                bboxes = labels["instances"].bboxes
-                # TODO: add supports of segments and keypoints
-                new = self.transform(image=im, bboxes=bboxes, class_labels=cls)  # transformed
-                if len(new["class_labels"]) > 0:  # skip update if no bbox in new im
-                    labels["img"] = new["image"]
-                    labels["cls"] = np.array(new["class_labels"])
-                    bboxes = np.array(new["bboxes"], dtype=np.float32)
-                labels["instances"].update(bboxes=bboxes)
-        else:
-            labels["img"] = self.transform(image=labels["img"])["image"]  # transformed
+        # if self.transform is None or random.random() > self.p:
+        #     return labels
 
-        return labels
+        # if self.contains_spatial:
+        #     cls = labels["cls"]
+        #     if len(cls):
+        #         im = labels["img"]
+        #         labels["instances"].convert_bbox("xywh")
+        #         labels["instances"].normalize(*im.shape[:2][::-1])
+        #         bboxes = labels["instances"].bboxes
+        #         # TODO: add supports of segments and keypoints
+        #         new = self.transform(image=im, bboxes=bboxes, class_labels=cls)  # transformed
+        #         if len(new["class_labels"]) > 0:  # skip update if no bbox in new im
+        #             labels["img"] = new["image"]
+        #             labels["cls"] = np.array(new["class_labels"])
+        #             bboxes = np.array(new["bboxes"], dtype=np.float32)
+        #         labels["instances"].update(bboxes=bboxes)
+        # else:
+        #     labels["img"] = self.transform(image=labels["img"])["image"]  # transformed
 
+        # return labels
+
+        for labels in labels_list:
+            if self.transform is None or random.random() > self.p:
+                return labels_list
+
+            if self.contains_spatial:
+                cls = labels["cls"]
+                if len(cls):
+                    im = labels["img"]
+                    labels["instances"].convert_bbox("xywh")
+                    labels["instances"].normalize(*im.shape[:2][::-1])
+                    bboxes = labels["instances"].bboxes
+                    # TODO: add supports of segments and keypoints
+                    new = self.transform(image=im, bboxes=bboxes, class_labels=cls)  # transformed
+                    if len(new["class_labels"]) > 0:  # skip update if no bbox in new im
+                        labels["img"] = new["image"]
+                        labels["cls"] = np.array(new["class_labels"])
+                        bboxes = np.array(new["bboxes"], dtype=np.float32)
+                    labels["instances"].update(bboxes=bboxes)
+            else:
+                labels["img"] = self.transform(image=labels["img"])["image"]  # transformed
+
+        return labels_list
 
 class Format:
     """
@@ -2002,7 +2174,9 @@ class Format:
         self.batch_idx = batch_idx  # keep the batch indexes
         self.bgr = bgr
 
-    def __call__(self, labels):
+    # src
+    # def __call__(self, labels):
+    def __call__(self, labels_list):
         """
         Formats image annotations for object detection, instance segmentation, and pose estimation tasks.
 
@@ -2031,43 +2205,124 @@ class Format:
             >>> formatted_labels = formatter(labels)
             >>> print(formatted_labels.keys())
         """
-        img = labels.pop("img")
-        h, w = img.shape[:2]
-        cls = labels.pop("cls")
-        instances = labels.pop("instances")
-        instances.convert_bbox(format=self.bbox_format)
-        instances.denormalize(w, h)
-        nl = len(instances)
+        # img = labels.pop("img")
+        # h, w = img.shape[:2]
+        # cls = labels.pop("cls")
+        # instances = labels.pop("instances")
+        # instances.convert_bbox(format=self.bbox_format)
+        # instances.denormalize(w, h)
+        # nl = len(instances)
 
-        if self.return_mask:
-            if nl:
-                masks, instances, cls = self._format_segments(instances, cls, w, h)
-                masks = torch.from_numpy(masks)
-            else:
-                masks = torch.zeros(
-                    1 if self.mask_overlap else nl, img.shape[0] // self.mask_ratio, img.shape[1] // self.mask_ratio
+        # if self.return_mask:
+        #     if nl:
+        #         masks, instances, cls = self._format_segments(instances, cls, w, h)
+        #         masks = torch.from_numpy(masks)
+        #     else:
+        #         masks = torch.zeros(
+        #             1 if self.mask_overlap else nl, img.shape[0] // self.mask_ratio, img.shape[1] // self.mask_ratio
+        #         )
+        #     labels["masks"] = masks
+        # labels["img"] = self._format_img(img)
+        # labels["cls"] = torch.from_numpy(cls) if nl else torch.zeros(nl)
+        # labels["bboxes"] = torch.from_numpy(instances.bboxes) if nl else torch.zeros((nl, 4))
+        # if self.return_keypoint:
+        #     labels["keypoints"] = torch.from_numpy(instances.keypoints)
+        #     if self.normalize:
+        #         labels["keypoints"][..., 0] /= w
+        #         labels["keypoints"][..., 1] /= h
+        # if self.return_obb:
+        #     labels["bboxes"] = (
+        #         xyxyxyxy2xywhr(torch.from_numpy(instances.segments)) if len(instances.segments) else torch.zeros((0, 5))
+        #     )
+        # # NOTE: need to normalize obb in xywhr format for width-height consistency
+        # if self.normalize:
+        #     labels["bboxes"][:, [0, 2]] /= w
+        #     labels["bboxes"][:, [1, 3]] /= h
+        # # Then we can use collate_fn
+        # if self.batch_idx:
+        #     labels["batch_idx"] = torch.zeros(nl)
+        # return labels
+
+        if isinstance(labels_list, list):
+            for count, labels in enumerate(labels_list):
+                img = labels.pop("img")
+                h, w = img.shape[:2]
+                cls = labels.pop("cls")
+                instances = labels.pop("instances")
+                instances.convert_bbox(format=self.bbox_format)
+                instances.denormalize(w, h)
+                nl = len(instances)
+
+                if self.return_mask or 'seg' in self.labels_name[count]:
+                    if nl:
+                        masks, instances, cls = self._format_segments(instances, cls, w, h)
+                        masks = torch.from_numpy(masks)
+                    else:
+                        masks = torch.zeros(
+                            1 if self.mask_overlap else nl, img.shape[0] // self.mask_ratio, img.shape[1] // self.mask_ratio
+                        )
+                    labels["masks"] = masks
+                labels["img"] = self._format_img(img)
+                labels["cls"] = torch.from_numpy(cls) if nl else torch.zeros(nl)
+                labels["bboxes"] = torch.from_numpy(instances.bboxes) if nl else torch.zeros((nl, 4))
+                if self.return_keypoint:
+                    labels["keypoints"] = torch.from_numpy(instances.keypoints)
+                    if self.normalize:
+                        labels["keypoints"][..., 0] /= w
+                        labels["keypoints"][..., 1] /= h
+                if self.return_obb:
+                    labels["bboxes"] = (
+                        xyxyxyxy2xywhr(torch.from_numpy(instances.segments)) if len(instances.segments) else torch.zeros((0, 5))
+                    )
+                # NOTE: need to normalize obb in xywhr format for width-height consistency
+                if self.normalize:
+                    labels["bboxes"][:, [0, 2]] /= w
+                    labels["bboxes"][:, [1, 3]] /= h
+                # Then we can use collate_fn
+                if self.batch_idx:
+                    labels["batch_idx"] = torch.zeros(nl)
+            return labels_list
+
+        else:
+            labels = labels_list
+            img = labels.pop("img")
+            h, w = img.shape[:2]
+            cls = labels.pop("cls")
+            instances = labels.pop("instances")
+            instances.convert_bbox(format=self.bbox_format)
+            instances.denormalize(w, h)
+            nl = len(instances)
+
+            if self.return_mask:
+                if nl:
+                    masks, instances, cls = self._format_segments(instances, cls, w, h)
+                    masks = torch.from_numpy(masks)
+                else:
+                    masks = torch.zeros(
+                        1 if self.mask_overlap else nl, img.shape[0] // self.mask_ratio, img.shape[1] // self.mask_ratio
+                    )
+                labels["masks"] = masks
+            labels["img"] = self._format_img(img)
+            labels["cls"] = torch.from_numpy(cls) if nl else torch.zeros(nl)
+            labels["bboxes"] = torch.from_numpy(instances.bboxes) if nl else torch.zeros((nl, 4))
+            if self.return_keypoint:
+                labels["keypoints"] = torch.from_numpy(instances.keypoints)
+                if self.normalize:
+                    labels["keypoints"][..., 0] /= w
+                    labels["keypoints"][..., 1] /= h
+            if self.return_obb:
+                labels["bboxes"] = (
+                    xyxyxyxy2xywhr(torch.from_numpy(instances.segments)) if len(instances.segments) else torch.zeros((0, 5))
                 )
-            labels["masks"] = masks
-        labels["img"] = self._format_img(img)
-        labels["cls"] = torch.from_numpy(cls) if nl else torch.zeros(nl)
-        labels["bboxes"] = torch.from_numpy(instances.bboxes) if nl else torch.zeros((nl, 4))
-        if self.return_keypoint:
-            labels["keypoints"] = torch.from_numpy(instances.keypoints)
+            # NOTE: need to normalize obb in xywhr format for width-height consistency
             if self.normalize:
-                labels["keypoints"][..., 0] /= w
-                labels["keypoints"][..., 1] /= h
-        if self.return_obb:
-            labels["bboxes"] = (
-                xyxyxyxy2xywhr(torch.from_numpy(instances.segments)) if len(instances.segments) else torch.zeros((0, 5))
-            )
-        # NOTE: need to normalize obb in xywhr format for width-height consistency
-        if self.normalize:
-            labels["bboxes"][:, [0, 2]] /= w
-            labels["bboxes"][:, [1, 3]] /= h
-        # Then we can use collate_fn
-        if self.batch_idx:
-            labels["batch_idx"] = torch.zeros(nl)
-        return labels
+                labels["bboxes"][:, [0, 2]] /= w
+                labels["bboxes"][:, [1, 3]] /= h
+            # Then we can use collate_fn
+            if self.batch_idx:
+                labels["batch_idx"] = torch.zeros(nl)
+            return labels
+         
 
     def _format_img(self, img):
         """

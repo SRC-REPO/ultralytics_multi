@@ -619,6 +619,140 @@ def ap_per_class(
     fp = (tp / (p + eps) - tp).round()  # false positives
     return tp, fp, p, r, f1, ap, unique_classes.astype(int), p_curve, r_curve, f1_curve, x, prec_values
 
+# src
+###### Jiayuan
+class SegmentationMetric(object):
+    '''
+    imgLabel [batch_size, height(144), width(256)]
+    confusionMatrix [[0(TN),1(FP)],
+                     [2(FN),3(TP)]]
+    '''
+
+    def __init__(self, numClass):
+        self.numClass = numClass
+        self.confusionMatrix = np.zeros((self.numClass,) * 2)
+
+    def pixelAccuracy(self):
+        # return all class overall pixel accuracy
+        # acc = (TP + TN) / (TP + TN + FP + TN)
+        acc = np.diag(self.confusionMatrix).sum() / self.confusionMatrix.sum()
+        return acc
+
+    # def lineAccuracy(self):
+    #     Acc = np.diag(self.confusionMatrix) / (self.confusionMatrix.sum(axis=1) + 1e-12)
+    #     return Acc[1]
+
+    def _get_values(self):
+        # Extracting values based on the provided structure
+        tn = self.confusionMatrix[0, 0]
+        fp = self.confusionMatrix[0, 1]
+        fn = self.confusionMatrix[1, 0]
+        tp = self.confusionMatrix[1, 1]
+        return tp, fp, fn, tn
+
+    def sensitivity(self):
+        tp, fp, fn, tn = self._get_values()
+        return tp / (tp + fn + 1e-12)
+
+    def specificity(self):
+        tp, fp, fn, tn = self._get_values()
+        return tn / (tn + fp + 1e-12)
+
+    def lineAccuracy(self):
+        test = (self.sensitivity() + self.specificity()) / 2
+        return test
+    def classPixelAccuracy(self):
+        # return each category pixel accuracy(A more accurate way to call it precision)
+        # acc = (TP) / TP + FP
+        classAcc = np.diag(self.confusionMatrix) / (self.confusionMatrix.sum(axis=0) + 1e-12)
+        return classAcc
+
+    def meanPixelAccuracy(self):
+        classAcc = self.classPixelAccuracy()
+        meanAcc = np.nanmean(classAcc)
+        return meanAcc
+
+    def meanIntersectionOverUnion(self):
+        # Intersection = TP Union = TP + FP + FN
+        # IoU = TP / (TP + FP + FN)
+        epsilon = 1e-9
+        intersection = np.diag(self.confusionMatrix)
+        union = np.sum(self.confusionMatrix, axis=1) + np.sum(self.confusionMatrix, axis=0) - np.diag(
+            self.confusionMatrix)
+        IoU = intersection / (union+epsilon)
+        IoU[np.isnan(IoU)] = 0
+        mIoU = np.nanmean(IoU)
+        return mIoU
+
+    def IntersectionOverUnion(self):
+        epsilon = 1e-9
+        intersection = np.diag(self.confusionMatrix)
+        union = np.sum(self.confusionMatrix, axis=1) + np.sum(self.confusionMatrix, axis=0) - np.diag(self.confusionMatrix)
+        IoU = intersection / (union+epsilon)
+        IoU[np.isnan(IoU)] = 0
+        return IoU[1]
+
+    def genConfusionMatrix(self, imgPredict, imgLabel):
+        # remove classes from unlabeled pixels in gt image and predict
+        # print(imgLabel.shape)
+        mask = (imgLabel >= 0) & (imgLabel < self.numClass)
+        label = self.numClass * imgLabel[mask] + imgPredict[mask]
+        count = np.bincount(label, minlength=self.numClass ** 2)
+        confusionMatrix = count.reshape(self.numClass, self.numClass)
+        return confusionMatrix
+
+    def Frequency_Weighted_Intersection_over_Union(self):
+        # FWIOU =     [(TP+FN)/(TP+FP+TN+FN)] *[TP / (TP + FP + FN)]
+        freq = np.sum(self.confusionMatrix, axis=1) / np.sum(self.confusionMatrix)
+        iu = np.diag(self.confusionMatrix) / (
+                np.sum(self.confusionMatrix, axis=1) + np.sum(self.confusionMatrix, axis=0) -
+                np.diag(self.confusionMatrix))
+        FWIoU = (freq[freq > 0] * iu[freq > 0]).sum()
+        return FWIoU
+
+    def addBatch(self, imgPredict, imgLabel):
+        assert imgPredict.shape == imgLabel.shape
+        # import numpy as np
+        #
+        # # Dummy data for demonstration
+        #
+        # # Plotting and saving imgPredict
+        # plt.imshow(imgPredict[0], cmap='gray')
+        # plt.title('imgPredict')
+        # plt.axis('off')
+        # plt.savefig('/home/jiayuan/ultralytics-main/ultralytics/runs/imgPredict.png')
+        #
+        #
+        # # Plotting and saving imgLabel
+        # plt.imshow(imgLabel[0], cmap='gray')
+        # plt.title('imgLabel')
+        # plt.axis('off')
+        # plt.savefig('/home/jiayuan/ultralytics-main/ultralytics/runs/imgLabel.png')
+
+
+
+        self.confusionMatrix += self.genConfusionMatrix(imgPredict, imgLabel)
+
+    def reset(self):
+        self.confusionMatrix = np.zeros((self.numClass, self.numClass))
+
+class AverageMeter(object):
+    """Computes and stores the average and current value"""
+    def __init__(self):
+        self.reset()
+
+    def reset(self):
+        self.val = 0
+        self.avg = 0
+        self.sum = 0
+        self.count = 0
+
+    def update(self, val, n=1):
+        self.val = val
+        self.sum += val * n
+        self.count += n
+        self.avg = self.sum / self.count if self.count != 0 else 0
+######
 
 class Metric(SimpleClass):
     """

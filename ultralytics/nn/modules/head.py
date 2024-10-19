@@ -167,12 +167,28 @@ class Segment(Detect):
     def __init__(self, nc=80, nm=32, npr=256, ch=()):
         """Initialize the YOLO model attributes such as the number of masks, prototypes, and the convolution layers."""
         super().__init__(nc, ch)
+        # src
         self.nm = nm  # number of masks
         self.npr = npr  # number of protos
         self.proto = Proto(ch[0], self.npr, self.nm)  # protos
 
         c4 = max(ch[0] // 4, self.nm)
         self.cv4 = nn.ModuleList(nn.Sequential(Conv(x, c4, 3), Conv(c4, c4, 3), nn.Conv2d(c4, self.nm, 1)) for x in ch)
+
+    # def __init__(self, nc=80, nm=32, npr=256, ch=()):
+    #     super().__init__(nc, ch)
+    #     ###### Jiayuan changed self.nm to self.nc
+    #     self.npr = 32  # intermediate convolutional feature dimension
+    #     self.cv1 = Conv(ch[0], self.npr, k=3)
+    #     self.upsample = nn.ConvTranspose2d(self.npr, self.npr//2, 2, 2, 0, bias=True)  # nn.Upsample(scale_factor=2, mode='nearest')
+    #     self.cv2 = Conv(self.npr//2, self.npr//4, k=3)
+    #     self.cv3 = Conv(self.npr//4, self.nc+1) ###### self.nc+1 means add the background
+    #     self.sigmoid = nn.Sigmoid()
+    #     # self.detect = Detect.forward
+    #     #
+    #     # c4 = max(ch[0] // 4, self.nm)
+    #     # self.cv4 = nn.ModuleList(nn.Sequential(Conv(x, c4, 3), Conv(c4, c4, 3), nn.Conv2d(c4, self.nm, 1)) for x in ch)
+
 
     def forward(self, x):
         """Return model outputs and mask coefficients if training, otherwise return outputs and mask coefficients."""
@@ -185,6 +201,11 @@ class Segment(Detect):
             return x, mc, p
         return (torch.cat([x, mc], 1), p) if self.export else (torch.cat([x[0], mc], 1), (x[1], mc, p))
 
+    # def forward(self, x):
+    #     """Return model outputs and mask coefficients if training, otherwise return outputs and mask coefficients."""
+    #     p = self.cv3(self.cv2(self.upsample(self.cv1(x[0])))) # mask protos
+    #     if self.training:
+    #         return p
 
 class OBB(Detect):
     """YOLO OBB detection head for detection with rotation models."""
