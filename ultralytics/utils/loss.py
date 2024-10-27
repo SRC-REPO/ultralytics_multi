@@ -12,6 +12,119 @@ from ultralytics.utils.torch_utils import autocast
 from .metrics import bbox_iou, probiou
 from .tal import bbox2dist
 
+class FocalLossV1(nn.Module):
+    """https://github.com/CoinCheung/pytorch-loss/blob/master/focal_loss.py"""
+    def __init__(self,
+                 alpha=0.25,
+                 gamma=2,
+                 reduction='mean',):
+        super(FocalLossV1, self).__init__()
+        self.alpha = alpha
+        self.gamma = gamma
+        self.reduction = reduction
+        self.crit = nn.BCEWithLogitsLoss(reduction='none')
+
+    def forward(self, logits, label):
+        '''
+        Usage is same as nn.BCEWithLogits:
+            >>> criteria = FocalLossV1()
+            >>> logits = torch.randn(8, 19, 384, 384)
+            >>> lbs = torch.randint(0, 2, (8, 19, 384, 384)).float()
+            >>> loss = criteria(logits, lbs)
+        '''
+        probs = torch.sigmoid(logits)
+        coeff = torch.abs(label - probs).pow(self.gamma).neg()
+        log_probs = torch.where(logits >= 0,
+                F.softplus(logits, -1, 50),
+                logits - F.softplus(logits, 1, 50))
+        log_1_probs = torch.where(logits >= 0,
+                -logits + F.softplus(logits, -1, 50),
+                -F.softplus(logits, 1, 50))
+        loss = label * self.alpha * log_probs + (1. - label) * (1. - self.alpha) * log_1_probs
+        loss = loss * coeff
+
+        if self.reduction == 'mean':
+            loss = loss.mean()
+        if self.reduction == 'sum':
+            loss = loss.sum()
+        return loss
+
+
+
+class tversky(nn.Module):
+    def __init__(self, smooth=1):
+        super(tversky, self).__init__()
+        self.smooth = smooth
+
+
+
+    def forward(self, logits, label,alpha=0.7):
+        '''
+        args: logits: tensor of shape (1, H, W)
+        args: label: tensor of shape (1, H, W)
+        '''
+        probs = torch.sigmoid(logits)
+
+        true_pos = torch.sum(label * probs)
+        false_neg = torch.sum(label * (1 - probs))
+        false_pos = torch.sum((1 - label) * probs)
+        loss = (true_pos + self.smooth)/(true_pos + alpha*false_neg + (1-alpha)*false_pos + self.smooth)
+
+        return 1-loss
+class DiceLoss(nn.Module):
+    def __init__(self, smooth=1, reduction='mean', weight=None, ignore_lb=255):
+        super(DiceLoss, self).__init__()
+        self.smooth = smooth
+        self.reduction = reduction
+        self.weight = None if weight is None else torch.tensor(weight)
+        self.ignore_lb = ignore_lb
+
+    def forward(self, logits, label):
+        '''
+        args: logits: tensor of shape (1, H, W)
+        args: label: tensor of shape (1, H, W)
+        '''
+        # Convert logits to probabilities
+        probs = torch.sigmoid(logits)
+
+
+        ignore_mask = label == self.ignore_lb
+        lb_one_hot = torch.zeros_like(probs)
+        lb_one_hot[label == 1] = 1
+        lb_one_hot[ignore_mask] = 0
+
+        # Compute loss
+        numer = torch.sum(probs * lb_one_hot)
+        denom = torch.sum(probs + lb_one_hot)
+
+        loss = 1 - (2 * numer + self.smooth) / (denom + self.smooth)
+
+        return loss
+
+
+
+class IoULoss(nn.Module):
+    '''https://blog.csdn.net/lwf1881/article/details/123725202'''
+    def __init__(self, weight=None, size_average=True):
+        super(IoULoss, self).__init__()
+
+    def forward(self, inputs, targets, smooth=1):
+        # comment out if your model contains a sigmoid or equivalent activation layer
+        inputs = torch.sigmoid(inputs)
+
+        # flatten label and prediction tensors
+        inputs = inputs.view(-1)
+        targets = targets.view(-1)
+
+        # intersection is equivalent to True Positive count
+        # union is the mutually inclusive area of all labels & predictions
+        intersection = (inputs * targets).sum()
+        total = (inputs + targets).sum()
+        union = total - intersection
+
+        IoU = (intersection + smooth) / (union + smooth)
+
+        return 1 - IoU
 
 class VarifocalLoss(nn.Module):
     """

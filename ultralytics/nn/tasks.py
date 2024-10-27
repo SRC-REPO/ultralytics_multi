@@ -530,12 +530,20 @@ class MultiModel(MultiBaseModel):
             self.yaml["backbone"][0][2] = "nn.Identity"
 
         # Define model
+        # ch = self.yaml["ch"] = self.yaml.get("ch", ch)  # input channels
+        # if nc and nc != self.yaml["nc"]:
+        #     LOGGER.info(f"Overriding model.yaml nc={self.yaml['nc']} with nc={nc}")
+        #     self.yaml["nc"] = nc  # override YAML value
+        # self.model, self.save = parse_model(deepcopy(self.yaml), ch=ch, verbose=verbose)  # model, savelist
+        # self.names = {i: f"{i}" for i in range(self.yaml["nc"])}  # default names dict
+
         ch = self.yaml["ch"] = self.yaml.get("ch", ch)  # input channels
-        if nc and nc != self.yaml["nc"]:
-            LOGGER.info(f"Overriding model.yaml nc={self.yaml['nc']} with nc={nc}")
-            self.yaml["nc"] = nc  # override YAML value
+        if nc and nc != self.yaml["tnc"]:
+            LOGGER.info(f"Overriding model.yaml nc={self.yaml['tnc']} with nc={tnc}")
+            self.yaml["tnc"] = nc  # override YAML value
         self.model, self.save = parse_model(deepcopy(self.yaml), ch=ch, verbose=verbose)  # model, savelist
-        self.names = {i: f"{i}" for i in range(self.yaml["nc"])}  # default names dict
+        self.names = {i: f"{i}" for i in range(self.yaml["tnc"])}  # default names dict
+
         self.inplace = self.yaml.get("inplace", True)
         self.end2end = getattr(self.model[-1], "end2end", False)
 
@@ -657,7 +665,8 @@ class DetectionModel(BaseModel):
             LOGGER.info(f"Overriding model.yaml nc={self.yaml['nc']} with nc={nc}")
             self.yaml["nc"] = nc  # override YAML value
         self.model, self.save = parse_model(deepcopy(self.yaml), ch=ch, verbose=verbose)  # model, savelist
-        self.names = {i: f"{i}" for i in range(self.yaml["nc"])}  # default names dict
+        # self.names = {i: f"{i}" for i in range(self.yaml["nc"])}  # default names dict
+        self.names = {i: f"{i}" for i in range(self.yaml["tnc"])}  # default names dict
         self.inplace = self.yaml.get("inplace", True)
         self.end2end = getattr(self.model[-1], "end2end", False)
 

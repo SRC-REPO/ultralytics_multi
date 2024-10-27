@@ -1,5 +1,10 @@
 # Ultralytics YOLO 🚀, AGPL-3.0 license
 
+# Set path to repo path but not conda env path
+import sys
+sys.path.insert(0, "/Users/aa/development/vision/ultralytics_multi/ultralytics")
+print(sys.path)
+
 import math
 import random
 from copy import copy
@@ -97,7 +102,8 @@ class DetectionSegmentationTrainer(BaseTrainer):
 
     def get_model(self, cfg=None, weights=None, verbose=True):
         """Return a YOLO detection model."""
-        multi_model = MultiModel(cfg, nc=self.data["nc"], verbose=verbose and RANK == -1)
+        # multi_model = MultiModel(cfg, nc=self.data["nc"], verbose=verbose and RANK == -1)
+        multi_model = MultiModel(cfg, nc=self.data["tnc"], verbose=verbose and RANK == -1)
         if weights:
             multi_model.load(weights)
         return multi_model
@@ -359,9 +365,13 @@ class SegLoss(Loss):
 
 def train(cfg=DEFAULT_CFG, use_python=False):
     """Train and optimize YOLO model given training data and device."""
-    model = cfg.model or 'yolov8n.pt'
+    # model = cfg.model or 'yolov8n.pt'
+    # model = cfg.model or 'yolov11s.pt'
+    model = YOLO('yolov11s.pt', task='multi')
     data = cfg.data or 'coco128.yaml'  # or yolo.ClassificationDataset("mnist")
-    device = cfg.device if cfg.device is not None else ''
+    # data = cfg.data or 'bdd-multi.yaml'  # or yolo.ClassificationDataset("mnist")
+    # device = cfg.device if cfg.device is not None else ''
+    device = "mps"
 
     args = dict(model=model, data=data, device=device)
     if use_python:
